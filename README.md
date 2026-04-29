@@ -7,6 +7,11 @@ Overlay for Rocket League, since after EAC update bakkesmod is not usable online
 * **Visual Assets:** Massive thanks to [@BenTheDan](https://github.com/BenTheDan) for [BenTheDan/IngameRank](https://github.com/BenTheDan/IngameRank) repository for providing the clean rank, division, and playlist icons used in this project!
 * **StatsAPI** This program makes use of the new stats api that RL put out for us devs read StatsAPI.md if you are interested or visit the official docs [here](https://www.rocketleague.com/en/developer/stats-api#UpdateState).
 
+## BEFORE INSTALL
+Edit your |RL Install Dir| \TAGame\Config\DefaultStatsAPI.ini find field PacketSendRate and set value to 20.
+## Latest release 
+[HERE](https://github.com/nixvio64/InGameRank/releases/latest)
+
 ##  Disclaimer
 **Use at your own risk.** This application utilizes a transparent screen overlay to display information. While it merely reads network traffic and does not hook into or modify game memory, third-party overlays can occasionally be flagged by Easy Anti-Cheat. User discretion is strictly advised.
 
