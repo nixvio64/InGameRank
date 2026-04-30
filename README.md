@@ -21,5 +21,8 @@ Run pip install -r requirements.txt and run pyinstaller main.spec, if you want t
 # Why does it have to show ranked data too?
 I didn't find a way to detect the current gamemode (if Casual or Ranked) and i wanted to be able to see casual mmr and best competitive mmr in the default modes, i know it's not pretty but i might change in future adding more customizability.
 
+## Todo:
+- [ ] Use OCR to put rank images near player name because looking down every time and in the current format to which most people are not used to take a lot of time to read.
+
 ## Contributing
 Do you want to make this app even better? Contributions are highly encouraged and appreciated.
