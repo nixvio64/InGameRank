@@ -76,7 +76,7 @@ for _logger in [logging.getLogger()] + list(logging.Logger.manager.loggerDict.va
         for _h in _logger.handlers:
             _h.addFilter(_ds_log_filter)
 
-VERSION = "v1.0.5"
+VERSION = "v1.0.6"
 DEBUG = False
 
 
@@ -491,6 +491,9 @@ PLAYLIST_IMAGE_MAP = {
     34: "7.png",  # Tournament
 }
 
+# playlist IDs to sum for total matches
+ALL_PLAYLIST_IDS = [10, 11, 13, 27, 28, 29, 30, 34, 61, 63]
+
 
 # img Loading
 
@@ -591,6 +594,14 @@ def shorten_rank(rank_str: str) -> str:
         else: return f"{parts[0][0].upper()}{num}"
     return s
 
+def get_total_matches(stats: dict) -> int:
+    total = 0
+    for pid in ALL_PLAYLIST_IDS:
+        entry = stats.get(pid)
+        if entry:
+            total += entry.get("matches_played", 0)
+    return total
+
 
 # API tracker.gg 
 
@@ -602,6 +613,8 @@ def player_is_in_current_match(primary_id: str) -> bool:
 def should_fetch_stats(cache_entry: dict, now: float) -> bool:
     if not cache_entry: return True
     if cache_entry.get("fetching"): return False
+    # Never retry a 404
+    if cache_entry.get("not_found"): return False
     age = now - cache_entry.get("timestamp", 0)
     if age > CACHE_TTL: return True
     if cache_entry.get("error") and not cache_entry.get("stats") and age >= TRACKER_RETRY_WAIT: return True
@@ -614,6 +627,8 @@ def request_player_stats_once(slug: str, target_user: str) -> dict:
         impersonate=random.choice(IMPERSONATE_OPTIONS),
         timeout=8,
     )
+    if response.status_code == 404:
+        raise ValueError("NOT_FOUND_404")
     response.raise_for_status()
     data = response.json()
     if not isinstance(data.get("data"), dict):
@@ -628,6 +643,7 @@ def parse_tracker_stats(data: dict) -> dict:
             tier = seg.get("stats", {}).get("tier", {}).get("metadata", {}).get("name", "Unranked")
             div_str = seg.get("stats", {}).get("division", {}).get("metadata", {}).get("name", "")
             mmr = seg.get("stats", {}).get("rating", {}).get("value", 0)
+            matches_played = seg.get("stats", {}).get("matchesPlayed", {}).get("value", 0) or 0
 
             stats[pid] = {
                 "tier_name": tier,
@@ -635,6 +651,7 @@ def parse_tracker_stats(data: dict) -> dict:
                 "div_name": div_str,
                 "div_id": get_div_id(div_str),
                 "mmr": int(mmr) if mmr else 0,
+                "matches_played": int(matches_played),
             }
     return stats
 
@@ -664,6 +681,7 @@ def fetch_player_stats(primary_id: str, display_name: str):
                     "timestamp": time.time(),
                     "fetching": False,
                     "error": False,
+                    "not_found": False,
                     "stats": stats,
                     "last_error": "",
                     "next_retry": 0,
@@ -671,6 +689,18 @@ def fetch_player_stats(primary_id: str, display_name: str):
                 return
             except Exception as exc:
                 last_error = str(exc)
+                if "NOT_FOUND_404" in last_error:
+                    if DEBUG: print(f"[DEBUG] 404 for {display_name}, marking not_found, no retries.")
+                    tracker_cache[primary_id] = {
+                        "timestamp": time.time(),
+                        "fetching": False,
+                        "error": True,
+                        "not_found": True,
+                        "stats": tracker_cache.get(primary_id, {}).get("stats", {}),
+                        "last_error": last_error,
+                        "next_retry": 0,
+                    }
+                    return
                 if DEBUG: print(f"[DEBUG] Tracker API error for {display_name} ({slug}/{target_user}) attempt {attempt + 1}/{TRACKER_ATTEMPTS_PER_ROUND}: {exc}")
 
         if DEBUG: print(f"[DEBUG] All attempts failed for {display_name}, waiting {TRACKER_RETRY_WAIT}s before retry. Last error: {last_error}")
@@ -680,6 +710,7 @@ def fetch_player_stats(primary_id: str, display_name: str):
             "timestamp": time.time(),
             "fetching": True,
             "error": True,
+            "not_found": False,
             "stats": old_stats,
             "last_error": last_error,
             "next_retry": time.time() + TRACKER_RETRY_WAIT,
@@ -693,6 +724,7 @@ def fetch_player_stats(primary_id: str, display_name: str):
                     "timestamp": time.time(),
                     "fetching": False,
                     "error": True,
+                    "not_found": False,
                     "stats": old_stats,
                     "last_error": last_error,
                     "next_retry": 0,
@@ -704,6 +736,26 @@ def fetch_player_stats(primary_id: str, display_name: str):
 
 # Socket
 
+
+def get_rl_window_rect():
+    """Returns (left, top, right, bottom) of the RL window, or None if not found."""
+    title = config.get("rl_window_title", "Rocket League")
+    hwnd = win32gui.FindWindow(None, title)
+    if not hwnd:
+        result = []
+        def enum_cb(h, _):
+            t = win32gui.GetWindowText(h)
+            if title.lower() in t.lower() and win32gui.IsWindowVisible(h):
+                result.append(h)
+        win32gui.EnumWindows(enum_cb, None)
+        hwnd = result[0] if result else None
+    if not hwnd:
+        return None
+    try:
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+        return left, top, right, bottom
+    except Exception:
+        return None
 
 def is_cursor_inside_window(hwnd: int) -> bool:
     try:
@@ -781,6 +833,7 @@ def handle(msg: dict):
                             "timestamp": now,
                             "stats": old_stats,
                             "error": False,
+                            "not_found": False,
                             "last_error": "",
                             "next_retry": 0,
                         }
@@ -792,6 +845,10 @@ def handle(msg: dict):
         elif evt in ("MatchEnded", "MatchDestroyed"):
             state["in_match"] = False
             state["players"] = []
+            # clear failed/not-found entries
+            for pid in list(tracker_cache.keys()):
+                if tracker_cache[pid].get("not_found") or tracker_cache[pid].get("error"):
+                    del tracker_cache[pid]
 
 def extract_json_objects(buf: bytes):
     objects, i = [], 0
@@ -850,7 +907,7 @@ def read_stream():
 class Overlay(QWidget):
     def __init__(self):
         super().__init__()
-        self.screen_geo = QApplication.primaryScreen().availableGeometry()
+        self.screen_geo = self._get_geometry()
         self.metrics = self._build_metrics()
         self.W = self.metrics["overlay_w"]
         self.H = self.metrics["min_h"]
@@ -899,16 +956,16 @@ class Overlay(QWidget):
             "text_baseline": round(self._screen_h(ROW_HEIGHT_PCT) * 0.67),
             "inner_bottom_pad": self._screen_h(INNER_BOTTOM_PADDING_PCT),
             "corner_radius": self._screen_h(0.74),
-            
+            "best_col":    self._window_w(overlay_w, 2.3),
+            "div1_x":      self._window_w(overlay_w, 16.0),
+            "rank_col":    self._window_w(overlay_w, 17.5),
+            "div2_x":      self._window_w(overlay_w, 32.0),
+            "casual_col":  self._window_w(overlay_w, 33.5),
+            "div3_x":      self._window_w(overlay_w, 41.5),
+            "matches_col": self._window_w(overlay_w, 43.0),
+            "div4_x":      self._window_w(overlay_w, 51.5),
+            "name_col":    self._window_w(overlay_w, 53.0),
 
-            "best_col": self._window_w(overlay_w, 2.3),
-            "div1_x": self._window_w(overlay_w, 16.0),
-            "rank_col": self._window_w(overlay_w, 17.5),
-            "div2_x": self._window_w(overlay_w, 32.0),
-            "casual_col": self._window_w(overlay_w, 33.5),
-            "div3_x": self._window_w(overlay_w, 41.5),
-            "name_col": self._window_w(overlay_w, 43.0),
-            
             "rank_icon": self._screen_h(RANK_ICON_SIZE_PCT),
             "rank_icon_gap": self._window_w(overlay_w, 1.05),
             "rank_fallback_w": self._window_w(overlay_w, 6.00),
@@ -920,8 +977,16 @@ class Overlay(QWidget):
         }
         return metrics
 
+    def _get_geometry(self):
+        from PySide6.QtCore import QRect
+        rect = get_rl_window_rect()
+        if rect:
+            l, t, r, b = rect
+            return QRect(l, t, r - l, b - t)
+        return QApplication.primaryScreen().geometry()
+
     def _refresh_display_metrics(self):
-        current_geo = QApplication.primaryScreen().availableGeometry()
+        current_geo = self._get_geometry()
         if current_geo != self.screen_geo:
             self.screen_geo = current_geo
             self.metrics = self._build_metrics()
@@ -932,7 +997,7 @@ class Overlay(QWidget):
         return self.screen_geo.x() + ((self.screen_geo.width() - self.W) // 2)
 
     def _bottom_y(self, height: int) -> int:
-        return self.screen_geo.y() + self.screen_geo.height() - height
+        return self.screen_geo.y() + self.screen_geo.height() - height - 20
 
     def _check_visibility(self):
         self._refresh_display_metrics()
@@ -1041,11 +1106,10 @@ class Overlay(QWidget):
         painter.setPen(QColor(100, 116, 139))
         painter.drawText(self.metrics["best_col"], header_text_y, "Best Rank")
 
-
         ranked_text = "Ranked "
         painter.drawText(self.metrics["rank_col"], header_text_y, ranked_text)
         
-        pl_target = int(self.metrics["header_icon"] * 0.8) # scale playlist icon header size
+        pl_target = int(self.metrics["header_icon"] * 0.8)
         pl_pm = get_pixmap("Playlists", PLAYLIST_IMAGE_MAP.get(playlist_id, "0.png"), pl_target, pl_target)
         if pl_pm:
             fm = painter.fontMetrics()
@@ -1055,26 +1119,28 @@ class Overlay(QWidget):
             painter.drawPixmap(px, py, pl_pm)
 
         painter.drawText(self.metrics["casual_col"], header_text_y, "Casual")
+        painter.drawText(self.metrics["matches_col"], header_text_y, "Matches")
 
-
+        # horizontal divider
         painter.setPen(QPen(QColor(45, 55, 72), 1))
         painter.drawLine(
             self.metrics["divider_margin_x"], self.metrics["divider_y"],
             self.width() - self.metrics["divider_margin_x"], self.metrics["divider_y"],
         )
 
-
+        # vertical dividers
         div_top = self.metrics["divider_y"]
         div_bottom = self.height()
         painter.drawLine(self.metrics["div1_x"], div_top, self.metrics["div1_x"], div_bottom)
         painter.drawLine(self.metrics["div2_x"], div_top, self.metrics["div2_x"], div_bottom)
         painter.drawLine(self.metrics["div3_x"], div_top, self.metrics["div3_x"], div_bottom)
+        painter.drawLine(self.metrics["div4_x"], div_top, self.metrics["div4_x"], div_bottom)
 
-
-        col_best   = self.metrics["best_col"]
-        col_ranked = self.metrics["rank_col"]
-        col_casual = self.metrics["casual_col"]
-        col_name   = self.metrics["name_col"]
+        col_best    = self.metrics["best_col"]
+        col_ranked  = self.metrics["rank_col"]
+        col_casual  = self.metrics["casual_col"]
+        col_matches = self.metrics["matches_col"]
+        col_name    = self.metrics["name_col"]
         font_regular = QFont(FONT_NAME, self.metrics["font_size"])
 
         for i, p in enumerate(players):
@@ -1103,12 +1169,12 @@ class Overlay(QWidget):
             elif stats:
                 painter.setPen(QColor(209, 213, 219))
                 
-                # best
+                # best rank
                 best_playlist = None
                 best_tier = -1
                 best_div = -1
                 
-                for p_id in [10, 11, 13]: # Check 1v1, 2v2, 3v3
+                for p_id in [10, 11, 13]:
                     rnk = stats.get(p_id)
                     if rnk:
                         t = rnk["tier_id"]
@@ -1143,7 +1209,7 @@ class Overlay(QWidget):
                     div_y = y + ((self.metrics["row_h"] - div_stack_h) // 2)
                     bx += self.draw_stacked_divisions(painter, bx, div_y, best_tier, best_div)
 
-
+                # current playlist ranked
                 rnk_data = stats.get(playlist_id)
                 if rnk_data:
                     tier_id = rnk_data["tier_id"]
@@ -1173,12 +1239,17 @@ class Overlay(QWidget):
                         painter.drawPixmap(col_ranked + ((t_size - t_pm.width()) // 2), icon_y, t_pm)
                         painter.drawText(col_ranked + self.metrics["unranked_text_offset"], text_y, "Unranked")
 
-
+                # casual MMR
                 painter.setPen(QColor(160, 160, 160))
                 cas_data = stats.get(0)
                 if cas_data:
                     painter.drawText(col_casual, text_y, f"{cas_data['mmr']}")
 
+                # total matches across all playlists
+                total_matches = get_total_matches(stats)
+                if total_matches > 0:
+                    painter.setPen(QColor(160, 160, 160))
+                    painter.drawText(col_matches, text_y, f"{total_matches:,}")
 
             painter.setPen(color)
             painter.drawText(col_name, text_y, f"{platform_tag} {p['Name']}")
