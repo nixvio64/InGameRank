@@ -13,13 +13,13 @@ from utils import (
     get_pixmap, get_platform_tag, get_div_color_id, shorten_rank, get_total_matches,
 )
 from config import config
-from controllers import get_rl_window_rect, is_rl_focused, is_hotkey_pressed
+from controllers import is_rl_focused, is_hotkey_pressed
 
 
 class Overlay(QWidget):
     def __init__(self):
         super().__init__()
-        self.screen_geo = self._get_geometry()
+        self.screen_geo = QApplication.primaryScreen().availableGeometry()
         self.metrics = self._build_metrics()
         self.W = self.metrics["overlay_w"]
         self.H = self.metrics["min_h"]
@@ -91,16 +91,8 @@ class Overlay(QWidget):
         }
         return metrics
 
-    def _get_geometry(self):
-        from PySide6.QtCore import QRect
-        rect = get_rl_window_rect()
-        if rect:
-            l, t, r, b = rect
-            return QRect(l, t, r - l, b - t)
-        return QApplication.primaryScreen().geometry()
-
     def _refresh_display_metrics(self):
-        current_geo = self._get_geometry()
+        current_geo = QApplication.primaryScreen().availableGeometry()
         if current_geo != self.screen_geo:
             self.screen_geo = current_geo
             self.metrics = self._build_metrics()
@@ -111,7 +103,7 @@ class Overlay(QWidget):
         return self.screen_geo.x() + ((self.screen_geo.width() - self.W) // 2)
 
     def _bottom_y(self, height: int) -> int:
-        return self.screen_geo.y() + self.screen_geo.height() - height - 20
+        return self.screen_geo.y() + self.screen_geo.height() - height
 
     # visibility
 
