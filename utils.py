@@ -1,5 +1,6 @@
 import sys
 import os
+import random
 import threading
 
 from PySide6.QtGui import QPixmap
@@ -7,13 +8,66 @@ from PySide6.QtCore import Qt
 
 # shared globals
 
-VERSION = "v1.0.7"
+VERSION = "v1.0.8"
 DEBUG = False
 
-IMPERSONATE_OPTIONS = [
-    "chrome120", "chrome124",
-    "edge99", "edge101",
+
+_CHROME_PLATFORMS = [
+    ("Windows NT 10.0; Win64; x64", "Windows"),
+    ("Macintosh; Intel Mac OS X 10_15_7", "macOS"),
+    ("X11; Linux x86_64", "Linux"),
 ]
+
+_FIREFOX_PLATFORMS = [
+    "Windows NT 10.0; Win64; x64",
+    "Macintosh; Intel Mac OS X 10.15",
+    "X11; Linux x86_64",
+]
+
+
+def _chrome_identities(major):
+    return [
+        {
+            "User-Agent": (
+                f"Mozilla/5.0 ({platform}) AppleWebKit/537.36 (KHTML, like Gecko) "
+                f"Chrome/{major}.0.0.0 Safari/537.36"
+            ),
+            "Sec-Ch-Ua-Platform": f'"{hint}"',
+        }
+        for platform, hint in _CHROME_PLATFORMS
+    ]
+
+
+def _firefox_identities(major):
+    return [
+        {
+            "User-Agent": (
+                f"Mozilla/5.0 ({platform}; rv:{major}.0) "
+                f"Gecko/20100101 Firefox/{major}.0"
+            ),
+        }
+        for platform in _FIREFOX_PLATFORMS
+    ]
+
+
+# impersonate target -> the User-Agents that are coherent with it
+IMPERSONATE_IDENTITIES = {
+    "chrome131": _chrome_identities(131),
+    "chrome133a": _chrome_identities(133),
+    "chrome136": _chrome_identities(136),
+    "chrome145": _chrome_identities(145),
+    "chrome146": _chrome_identities(146),
+    "firefox144": _firefox_identities(144),
+    "firefox147": _firefox_identities(147),
+}
+
+IMPERSONATE_OPTIONS = list(IMPERSONATE_IDENTITIES)
+
+
+def pick_browser_identity():
+    """Pick an impersonate profile plus a User-Agent that matches it."""
+    profile = random.choice(IMPERSONATE_OPTIONS)
+    return profile, dict(random.choice(IMPERSONATE_IDENTITIES[profile]))
 
 FONT_NAME = "Segoe UI"
 FONT_SIZE = 11

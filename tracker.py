@@ -2,12 +2,11 @@ import time
 import urllib.request
 import urllib.parse
 import threading
-import random
 
 from curl_cffi import requests as cf_requests
 
 from utils import (
-    DEBUG, IMPERSONATE_OPTIONS, state, tracker_cache,
+    DEBUG, state, tracker_cache, pick_browser_identity,
     TRACKER_ATTEMPTS_PER_ROUND, TRACKER_RETRY_WAIT, CACHE_TTL,
     is_bot, get_tier_id, get_div_id, log,
 )
@@ -39,9 +38,11 @@ def should_fetch_stats(cache_entry: dict, now: float) -> bool:
 
 def request_player_stats_once(slug: str, target_user: str) -> dict:
     url = f"https://api.tracker.gg/api/v2/rocket-league/standard/profile/{slug}/{target_user}"
+    profile, headers = pick_browser_identity()
     response = cf_requests.get(
         url,
-        impersonate=random.choice(IMPERSONATE_OPTIONS),
+        impersonate=profile,
+        headers=headers,
         timeout=8,
     )
     if response.status_code == 404:
