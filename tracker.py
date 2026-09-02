@@ -1,15 +1,17 @@
+import json
 import time
-import urllib.request
+import urllib.error
 import urllib.parse
-import threading
-
-from curl_cffi import requests as cf_requests
+import urllib.request
 
 from utils import (
-    DEBUG, state, tracker_cache, pick_browser_identity,
+    DEBUG, state, tracker_cache,
     TRACKER_ATTEMPTS_PER_ROUND, TRACKER_RETRY_WAIT, CACHE_TTL,
-    is_bot, get_tier_id, get_div_id, log,
+    is_bot, get_div_id, log,
 )
+
+RLAPI_BASE = "https://rlapi-serve.nixvio64.workers.dev"
+REQUEST_TIMEOUT = 8
 
 
 # cache helpers
@@ -36,67 +38,49 @@ def should_fetch_stats(cache_entry: dict, now: float) -> bool:
 
 # API
 
-def request_player_stats_once(slug: str, target_user: str) -> dict:
-    url = f"https://api.tracker.gg/api/v2/rocket-league/standard/profile/{slug}/{target_user}"
-    profile, headers = pick_browser_identity()
-    response = cf_requests.get(
-        url,
-        impersonate=profile,
-        headers=headers,
-        timeout=8,
-    )
-    if response.status_code == 404:
-        raise ValueError("NOT_FOUND_404")
-    response.raise_for_status()
-    data = response.json()
-    if not isinstance(data.get("data"), dict):
-        raise ValueError("Tracker API returned no profile data")
-    return data
+def request_player_stats_once(primary_id: str, display_name: str) -> dict:
+    path = urllib.parse.quote(primary_id, safe="")
+    url = f"{RLAPI_BASE}/player/{path}/ranks"
+    if display_name:
+        url += "?name=" + urllib.parse.quote(display_name, safe="")
+
+    req = urllib.request.Request(url, headers={"User-Agent": "InGameRank"})
+    try:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code in (400, 404):
+            raise ValueError("NOT_FOUND_404")
+        body = exc.read().decode("utf-8", "replace")[:200]
+        raise ValueError(f"HTTP {exc.code}: {body}")
 
 
-def parse_tracker_stats(data: dict) -> dict:
+def parse_player_stats(data: dict) -> dict:
     stats = {}
-    for seg in data.get("data", {}).get("segments", []):
-        if seg.get("type") == "playlist":
-            pid = seg.get("attributes", {}).get("playlistId")
-            tier = seg.get("stats", {}).get("tier", {}).get("metadata", {}).get("name", "Unranked")
-            div_str = seg.get("stats", {}).get("division", {}).get("metadata", {}).get("name", "")
-            mmr = seg.get("stats", {}).get("rating", {}).get("value", 0)
-            matches_played = seg.get("stats", {}).get("matchesPlayed", {}).get("value", 0) or 0
-
-            stats[pid] = {
-                "tier_name": tier,
-                "tier_id": get_tier_id(tier),
-                "div_name": div_str,
-                "div_id": get_div_id(div_str),
-                "mmr": int(mmr) if mmr else 0,
-                "matches_played": int(matches_played),
-            }
+    for pid, rank in (data.get("ranks") or {}).items():
+        div_name = rank.get("division_name", "")
+        stats[int(pid)] = {
+            "tier_name": rank.get("tier_name", "Unranked"),
+            "tier_id": int(rank.get("tier_id", 0) or 0),
+            "div_name": div_name,
+            "div_id": get_div_id(div_name),
+            "mmr": int(rank.get("mmr", 0) or 0),
+            "matches_played": int(rank.get("matches_played", 0) or 0),
+        }
     return stats
 
 
 def fetch_player_stats(primary_id: str, display_name: str):
     if is_bot(primary_id):
         return
-    parts = primary_id.split("|")
-    platform = parts[0].lower()
-    user_id = parts[1]
 
-    if platform == "switch":
-        log(f"Skipping Switch player: {display_name}", "DEBUG")
-        return
-
-    plat_map = {"steam": "steam", "epic": "epic", "xboxone": "xbl", "ps4": "psn", "switch": "switch"}
-    slug = plat_map.get(platform, "epic")
-
-    target_user = user_id if slug == "steam" else urllib.parse.quote(display_name, safe="")
     last_error = ""
 
     while True:
         for attempt in range(TRACKER_ATTEMPTS_PER_ROUND):
             try:
-                data = request_player_stats_once(slug, target_user)
-                stats = parse_tracker_stats(data)
+                data = request_player_stats_once(primary_id, display_name)
+                stats = parse_player_stats(data)
 
                 tracker_cache[primary_id] = {
                     "timestamp": time.time(),
@@ -104,6 +88,8 @@ def fetch_player_stats(primary_id: str, display_name: str):
                     "error": False,
                     "not_found": False,
                     "stats": stats,
+                    "avatar_url": data.get("avatar_url"),
+                    "display_name": data.get("display_name") or display_name,
                     "last_error": "",
                     "next_retry": 0,
                 }
@@ -111,7 +97,7 @@ def fetch_player_stats(primary_id: str, display_name: str):
             except Exception as exc:
                 last_error = str(exc)
                 if "NOT_FOUND_404" in last_error:
-                    log(f"404 for {display_name}, marking not_found, no retries.", "DEBUG")
+                    log(f"No data for {display_name}, marking not_found, no retries.", "DEBUG")
                     tracker_cache[primary_id] = {
                         "timestamp": time.time(),
                         "fetching": False,
@@ -123,7 +109,7 @@ def fetch_player_stats(primary_id: str, display_name: str):
                     }
                     return
                 if DEBUG:
-                    log(f"Tracker API error for {display_name} ({slug}/{target_user}) attempt {attempt + 1}/{TRACKER_ATTEMPTS_PER_ROUND}: {exc}", "DEBUG")
+                    log(f"RLAPI error for {display_name} ({primary_id}) attempt {attempt + 1}/{TRACKER_ATTEMPTS_PER_ROUND}: {exc}", "DEBUG")
 
         log(f"All attempts failed for {display_name}, waiting {TRACKER_RETRY_WAIT}s before retry. Last error: {last_error}", "DEBUG")
 
