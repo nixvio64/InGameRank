@@ -3,7 +3,6 @@
 Overlay for Rocket League, since after EAC update bakkesmod is not usable online anymore, so i made my own version.
 
 ## Acknowledgements & Credits
-* **Tracker Network:** A huge thank you to [tracker.gg](https://tracker.gg/) for their API, which powers all the stat fetching in this app.
 * **Visual Assets:** Massive thanks to [@BenTheDan](https://github.com/BenTheDan) for [BenTheDan/IngameRank](https://github.com/BenTheDan/IngameRank) repository for providing the clean rank, division, and playlist icons used in this project!
 * **StatsAPI** This program makes use of the new stats api that RL put out for us devs read StatsAPI.md if you are interested or visit the official docs [here](https://www.rocketleague.com/en/developer/stats-api).
 
