@@ -1,4 +1,4 @@
-# **InGameRank is now deprecated!**
+# **InGameRank has been permanently moved to [Hebnix](https://hebnix.com)**
 InGameRank has been ported to a [Hebnix](https://hebnix.com) plugin.
 
 You can download the plugin from the Hebnix client itself, or from the [plugin page](https://hebnix.com/plugins/332)
