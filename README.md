@@ -1,4 +1,15 @@
-# InGameRank Overlay
+# **InGameRank is now deprecated!**
+InGameRank has been ported to a [Hebnix](https://hebnix.com) plugin.
+
+You can download the plugin from the Hebnix client itself, or from the [plugin page](https://hebnix.com/plugins/332)
+
+Hebnix is open source, and the repository can be viewed [here](https://github.com/hebbins/Hebnix-Public)
+
+If you run into any issues or need assistance, please join the [Discord Server](https://discord.gg/yr6xXb5wQd)
+
+This repository will stay available for archive purposes only.
+
+## InGameRank Overlay
 
 Overlay for Rocket League, since after EAC update bakkesmod is not usable online anymore, so i made my own version.
 
